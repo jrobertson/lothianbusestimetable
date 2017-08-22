@@ -122,8 +122,6 @@ class LothianBusesTimetable
     h = a0.shift
     master[:sunday][:outbound] = h
 
-    # note: the special character looks like a space 
-    #       but is in fact " ".ord #=> 160
 
     master.to_a[1..-1].each do |key, timetable|
 
@@ -132,10 +130,10 @@ class LothianBusesTimetable
         # find the interval gaps
 
         a = printed_rows.to_a
-        index = a.index a.detect {|x| x.last.grep(/^ $/).any? }
+        index = a.index a.detect {|x| x.last.grep(/^ $/).any? }
         a2 = a[index].last
 
-        gaps = a2.map.with_index.select {|x,i| x == " "}.map(&:last)
+        gaps = a2.map.with_index.select {|x,i| x == " "}.map(&:last)
 
         gaps.delete_at -1 if gaps.last >= a2.length - 1
 
@@ -220,4 +218,3 @@ class LothianBusesTimetable
 
   end
 end
-
