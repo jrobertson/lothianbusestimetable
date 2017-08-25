@@ -45,7 +45,7 @@ class LothianBusesTimetable
     table.xpath('tr').each do |tr|
 
       # get the name
-      a = tr.xpath('td//text()').map(&:to_s)
+      a = tr.xpath('td//text()').map(&:unescape)
 
       col1 = a.shift.strip
 
@@ -217,4 +217,28 @@ class LothianBusesTimetable
     @timetable = master
 
   end
+  
+  def services()
+    
+    return @services if @services
+    
+    url = @base_url + '1'
+
+    doc = Nokorexi.new(url).to_doc
+
+    o = doc.root.xpath('//optgroup').map do |options|
+      
+      [
+        options.attributes[:label].sub(' services',''),  
+        options.xpath('option/text()').map do |x| 
+          %i(number name).zip(x.to_s.split(/ - /,2)).to_h
+        end
+      ]
+
+    end
+
+    @services = o.to_h
+      
+  end
+  
 end

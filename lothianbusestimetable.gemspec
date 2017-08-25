@@ -1,6 +1,6 @@
 Gem::Specification.new do |s|
   s.name = 'lothianbusestimetable'
-  s.version = '0.1.2'
+  s.version = '0.1.3'
   s.summary = 'Web scrapes a bus timetable from Lothian Buses website. #edinburgh #scotland'
   s.authors = ['James Robertson']
   s.files = Dir['lib/lothianbusestimetable.rb']
