@@ -46,6 +46,8 @@ class LothianBusesTimetable
 
       # get the name
       a = tr.xpath('td//text()').map(&:unescape)
+      
+      next unless a.any?
 
       col1 = a.shift.strip
 
@@ -54,7 +56,8 @@ class LothianBusesTimetable
         a0 << {service: $1}
 
       elsif col1.empty? or col1.length <= 1
-
+        
+        #next if a.length < 1
         if prev_col.empty? or prev_col.length <= 1 and a0.last.any? then
 
           a0 << {}
@@ -70,7 +73,7 @@ class LothianBusesTimetable
 
       else
 
-        if a.any? then
+        if a.any? and a.length > 1 then
 
           h = a0.last
 
@@ -81,6 +84,7 @@ class LothianBusesTimetable
           end
 
         else
+
           a0.pop if a0.last.empty?
         end
       end
@@ -114,28 +118,40 @@ class LothianBusesTimetable
     h = a0.shift
     master[:saturday][:outbound] = h
 
-    h = a0.shift 
-    h = a0.shift until h.any?
-    master[:sunday][:desc] = h[:timetable]
     h = a0.shift
-    master[:sunday][:inbound] = h
-    h = a0.shift
-    master[:sunday][:outbound] = h
-
+    
+    if h then
+      
+      h = a0.shift until h.any?
+      master[:sunday][:desc] = h[:timetable]
+      h = a0.shift
+      master[:sunday][:inbound] = h
+      h = a0.shift
+      master[:sunday][:outbound] = h
+      
+    end
 
     master.to_a[1..-1].each do |key, timetable|
 
       timetable.to_a[1..-1].each do |direction, printed_rows|
 
+        next unless printed_rows
+
         # find the interval gaps
 
         a = printed_rows.to_a
-        index = a.index a.detect {|x| x.last.grep(/^ $/).any? }
-        a2 = a[index].last
+        index = a.index a.detect {|x| x.last.grep(/^ |then$/).any? }
+      
+        if index then
+          a2 = a[index].last
 
-        gaps = a2.map.with_index.select {|x,i| x == " "}.map(&:last)
+          gaps = a2.map.with_index.select {|x,i| x == " " \
+                                           or x == 'then'}.map(&:last)
 
-        gaps.delete_at -1 if gaps.last >= a2.length - 1
+          gaps.delete_at -1 if gaps.last >= a2.length - 1
+        else
+          gaps = []
+        end
 
         # sanitise the times (where short hand times are 
         # given i.e. minutes only)
@@ -143,7 +159,7 @@ class LothianBusesTimetable
         printed_rows.each do |name, row|
 
           prev_time = nil
-          printed_rows[name] = row.map.with_index do |col,i|
+          printed_rows[name] = row.map.with_index do |col,i|            
 
             if gaps.include? i then
               col
@@ -173,15 +189,22 @@ class LothianBusesTimetable
 
         # fill in the gaps
 
-        periods = gaps.map {|i| a.map {|k,v| v[i].to_s.gsub(/\W/,'')}
+        periods = gaps.map {|i| a.map {|k,v| v[i].to_s.gsub(/\W/,' ')}
                     .compact.join(' ').strip }
 
         gap_times = gaps.zip(periods)
 
 
         intervaltimes = gap_times.map do |i, desc|
+          
+          interval = if desc =~ 
+              /^then at these mins past each hour(?: until)?/ then
+            60
+          else
+            interval = desc[/then (?:at least )?every (\d+) mins(?: until)?/,1].to_i
+          end
 
-          interval = desc[/then every (\d+) mins until/,1].to_i
+          next if interval == 0
 
           new_rows = printed_rows.map do |k,v|
 
