@@ -37,59 +37,86 @@ class LothianBusesTimetable
 
     table = doc.root.element('//table')
 
-    prev_col = ''
+    prev_col, prev_bus_stop = '', ''
     a0 = []
+    
+    tablebreak = 0
 
     # get the destinations
     # inbound and outbound
     table.xpath('tr').each do |tr|
 
       # get the name
-      a = tr.xpath('td//text()').map(&:unescape)
+      tds = tr.xpath('td')#.map(&:unescape)
+
+      a = tds.flat_map {|x| r = x.xpath('.//text()').map(&:unescape); r.any? ? r : ''}
 
       next unless a.any?
 
-      col1 = a.shift.strip
-
-      if col1 =~ /^Service (\w?\d+)/ and a0.empty?then
+      col1 = a.shift.strip.gsub(',','')
+      
+      if col1 =~ /^Service (\w?\d+(?:\s*\/\s*\w?\d+)?)/ then
 
         a0 << {service: $1}
+        tablebreak = 0
 
-      elsif prev_col =~ /^Service \w?\d+$/ 
-
+      elsif prev_col =~ /^Service \w?\d+(?:\s*\/\s*\w?\d+)?/ 
+        
         a0.last.merge!(timetable: col1)
         a0 << {}
-#=begin       
+
+      elsif col1.empty? and prev_col.empty? and a.length <= 1 
+        a0 << {}
+        next
       elsif col1.empty? and a.length > 1
+
+        tablebreak += 1 if a0.last and a0.last.any?
         next
       elsif col1.empty? or a.length <= 1
         
-        #next if a.length < 1
-        if prev_col.empty? or prev_col.length <= 1 and a0.last and a0.last.any? then
+        tablebreak += 1 if a0.last and a0.last.any?
+        if (prev_col.empty? or prev_col.length <= 1) and a0.last and a0.last.any? then
 
-          a0 << {}
+          if a0.last.keys.first == col1 and prev_col.empty? and a0.last.keys.length > 1 then
+
+            a0 << {} 
+          end          
 
         else
 
           prev_col = ''
         end
-#=end        
+
       else
 
-        if a.any? and a.length > 1 then
+        if a.any? and a.length > 2 and a0.last and col1.length < 40 then
+
+          if a0.last.keys.last == col1 and prev_col.empty? and a0.last.keys.length > 1 then
+
+            a0 << {} 
+          end
 
           next if col1.empty?
           h = a0.last
-          
+
+          tablebreak = 0 if h.empty?
           if h.has_key? col1 then
-            h[col1].concat a
+
+            if tablebreak == 0 then
+              col1 = col1 + ' [R]' 
+              h[col1] = a
+            else
+              h[col1].concat a.take(19)
+            end
           else
-            h[col1] = a
+            h[col1] = a.take(19)
           end
+
 
         else
 
-          #a0.pop if a0.last.empty?
+          tablebreak += 1
+
           next
         end
       end
@@ -97,55 +124,17 @@ class LothianBusesTimetable
       prev_col = col1
 
     end
-
-
-    master = {
-      service: '',
-      weekday: {desc: '', inbound: {}, outbound: {}},
-      saturday: {desc: '', inbound: {}, outbound: {}},
-      sunday: {desc: '', inbound: {}, outbound: {}}
-    }
+    #puts 'a0: ' + a0.inspect
+        
+    master = build_timetable(a0)
     
-    h = a0.shift
-
-    master[:service] = h[:service]
-    master[:weekday][:desc] = h[:timetable]
-
-    h = a0.shift
-
-    master[:weekday][:inbound] = h
-    h = a0.shift
-
-    master[:weekday][:outbound] = h
-
-    h = a0.shift 
-    h = a0.shift until h.any?
-
-    master[:saturday][:desc] = h[:timetable]
-    h = a0.shift
-    master[:saturday][:inbound] = h
-    h = a0.shift
-    master[:saturday][:outbound] = h
-
-    h = a0.shift
-    
-    if h and a0.any? then
-      
-      h = a0.shift until h.any?
-      master[:sunday][:desc] = h[:timetable]
-      h = a0.shift
-      master[:sunday][:inbound] = h
-      h = a0.shift
-      master[:sunday][:outbound] = h
-      
-    end
-
+    #puts 'master: ' + master.inspect
 
     master.to_a[1..-1].each do |key, timetable|
 
       timetable.to_a[1..-1].each do |direction, printed_rows|
 
-        next unless printed_rows
+        next unless printed_rows        
 
         # find the interval gaps
 
@@ -163,6 +152,7 @@ class LothianBusesTimetable
           gaps = []
         end
 
+        
         
         # sanitise the times (where short hand times are 
         # given i.e. minutes only)
@@ -210,7 +200,6 @@ class LothianBusesTimetable
 
         gap_times = gaps.zip(periods)
 
-
         intervaltimes = gap_times.map do |i, desc|
           
           intervals = []
@@ -222,6 +211,7 @@ class LothianBusesTimetable
             new_rows = every_hourlyset_interval printed_rows, i
           else
             interval = desc[/then (?:at least )?every (\d+) mins(?: until)?/,1]
+
             new_rows = every_interval printed_rows, i, interval
           end
 
@@ -271,11 +261,86 @@ class LothianBusesTimetable
   
   private
   
+  def build_timetable(a0)
+    
+    master = {
+      service: '',
+      weekday: {desc: '', inbound: {}, outbound: {}},
+      saturday: {desc: '', inbound: {}, outbound: {}},
+      sunday: {desc: '', inbound: {}, outbound: {}}
+    }
+        
+    h = a0.shift
+
+    master[:service] = h[:service]
+    h = a0.shift until h.any? #
+    master[:weekday][:desc] = h[:timetable]
+
+    #h = a0.shift
+    h = a0.shift until h.any? and not h[:service]
+
+    master[:weekday][:inbound] = h
+    h = a0.shift
+    a0.reject! {|x| x.empty?}
+
+    
+    if a0.first and a0.first.any? then
+      
+      #h = a0.shift
+      h = a0.shift until h.any?
+
+      master[:weekday][:outbound] = h unless h.has_key? :timetable
+
+      h = a0.shift unless h.has_key? :timetable
+
+      
+      if h and a0.any? and h[:timetable] != 'Public Holiday Timetable' then
+        
+        h = a0.shift until h.any?
+
+        master[:saturday][:desc] = h[:timetable]
+        h = a0.shift until h.any? and not h[:service]
+        master[:saturday][:inbound] = h
+        h = a0.shift
+
+        return master unless a0.any?
+        h = a0.shift until h.any?
+
+        master[:saturday][:outbound] = h unless h.has_key? :timetable
+
+        
+        h = a0.shift until h.any?   
+
+        if h and a0.any? then
+          h = a0.shift
+          h = a0.shift until h.any?
+          master[:sunday][:desc] = h[:timetable]
+          h = a0.shift
+          h = a0.shift until h.any?
+
+          master[:sunday][:inbound] = h
+          h = a0.shift until h.any?
+          master[:sunday][:outbound] = h
+          
+        end
+      end
+    end    
+    
+    return master
+  end
+  
   def every_hourlyset_interval(rows, i)    
     
     rows.map do |k,v|
-
-      i -= 19 if v.length < i # caters for special journey entries which happen at limited times of the day
+      
+      # some limited bus stops don't apply
+      next unless v.detect {|x| x =~ /^\d{2} *$/}
+      
+      # the next statement caters for special journey entries which happen at 
+      # limited times of the day
+      
+      i -= 19 if v.length < i 
+      
       start_i = i - 1
 
       start_i -= 1 while v[start_i] =~ /^(?:\d{2}|-|\||[A-Z]|) *$/
@@ -291,7 +356,7 @@ class LothianBusesTimetable
       prev_time = t1
 
       t2 = t1
-      #j = v[i+1] =~ /^\d{4}/ ? i+1 : i+2      
+
       j = i + 1
       j += 1 until v[j] =~ /^\d{4}/
 
@@ -321,15 +386,40 @@ class LothianBusesTimetable
   end  
 
   def every_interval(rows, i, interval=60)
-    
+    # todo 26-Aug-2017
+    # here we will add 
     return unless interval
     
     rows.map do |k,v|
+      
+      next unless v.is_a? Array
 
       times = []
       
-      next unless v[i-1] && v[i-1] =~ /^\d{4}$/
+      next unless v[i-1]
+      
+      if v[i-1] =~ /^\d{2} *$/ then
+        
+        j = i - 1
+        j -= 1 until v[j] =~ /^\d{4}/
 
+        t0 = Time.strptime(v[j], "%H%M")
+        prev_time = t0
+        
+        (j+1..i-1).each do |k| 
+          
+          s = "%02d%s" % [t0.hour, v[k]]
+          new_time = Time.strptime(s, "%H%M")
+          new_time += (60 * 60) if new_time < prev_time
+          prev_time = new_time
+
+          #times << new_time.strftime("%H%M")
+          v[k] = new_time.strftime("%H%M")
+
+        end
+      end
+
+      next unless v[i-1] =~ /^\d{4} *$/
       t = Time.strptime(v[i-1], "%H%M") #if v[i-1] =~ /^\d{4}$/
 
       while t + (60 * interval.to_i) < Time.strptime(v[i+1], "%H%M") do
@@ -337,7 +427,7 @@ class LothianBusesTimetable
         times << t.strftime("%H%M")
       end
 
-      [k,times]
+      [k, times ]
     end.compact    
   end
   
