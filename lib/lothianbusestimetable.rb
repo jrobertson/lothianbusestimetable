@@ -2,6 +2,7 @@
 
 # file: lothianbusestimetable.rb
 
+require 'json'
 require 'time'
 require 'nokorexi'
 
@@ -22,11 +23,37 @@ require 'nokorexi'
 
 class LothianBusesTimetable
 
-  attr_reader :timetable
+  attr_reader :timetable, :timetables
 
-  def initialize
+  def initialize(localfile=nil)
+    
     super()
     @base_url = 'https://lothianbuses.co.uk/timetables-and-maps/timetables/'
+    
+    if localfile then
+      
+      h = JSON.parse RXFHelper.read(localfile).first 
+      @timetables = {}
+      
+      h.each do |num, timetable|
+        
+        @timetables[num] = {}
+        
+        @timetables[num][:service] = timetable['service']
+        
+        timetable.to_a[1..-1].each do |subheading, day| 
+          
+          @timetables[num][subheading.to_sym] = day.clone
+          
+          day.each do |direction,table| 
+            @timetables[num][subheading.to_sym][direction.to_sym] = table
+          end
+        end
+        
+      end
+      
+    end
+
   end
 
   def fetch_timetable(service_number)
@@ -47,9 +74,11 @@ class LothianBusesTimetable
     table.xpath('tr').each do |tr|
 
       # get the name
-      tds = tr.xpath('td')#.map(&:unescape)
-
-      a = tds.flat_map {|x| r = x.xpath('.//text()').map(&:unescape); r.any? ? r : ''}
+      tds = tr.xpath('td')
+      a = tds.flat_map do |x| 
+        r = x.xpath('.//text()').map(&:unescape)
+        r.any? ? r : ''
+      end
 
       next unless a.any?
 
@@ -75,9 +104,11 @@ class LothianBusesTimetable
       elsif col1.empty? or a.length <= 1
         
         tablebreak += 1 if a0.last and a0.last.any?
-        if (prev_col.empty? or prev_col.length <= 1) and a0.last and a0.last.any? then
+        if (prev_col.empty? or prev_col.length <= 1) and a0.last \
+          and a0.last.any? then
 
-          if a0.last.keys.first == col1 and prev_col.empty? and a0.last.keys.length > 1 then
+          if a0.last.keys.first == col1 and prev_col.empty? \
+            and a0.last.keys.length > 1 then
 
             a0 << {} 
           end          
@@ -91,7 +122,8 @@ class LothianBusesTimetable
 
         if a.any? and a.length > 2 and a0.last and col1.length < 40 then
 
-          if a0.last.keys.last == col1 and prev_col.empty? and a0.last.keys.length > 1 then
+          if a0.last.keys.last == col1 and prev_col.empty? and 
+              a0.last.keys.length > 1 then
 
             a0 << {} 
           end
@@ -100,6 +132,7 @@ class LothianBusesTimetable
           h = a0.last
 
           tablebreak = 0 if h.empty?
+          
           if h.has_key? col1 then
 
             if tablebreak == 0 then
@@ -111,7 +144,6 @@ class LothianBusesTimetable
           else
             h[col1] = a.take(19)
           end
-
 
         else
 
@@ -151,48 +183,8 @@ class LothianBusesTimetable
         else
           gaps = []
         end
+                
 
-        
-        
-        # sanitise the times (where short hand times are 
-        # given i.e. minutes only)
-
-=begin
-# sanitise diabled for now
-# probably perform this at the end now
-
-        printed_rows.each do |name, row|
-
-          prev_time = nil
-          printed_rows[name] = row.map.with_index do |col,i|            
-
-            if gaps.include? i then
-              col
-            else
-              case col 
-              when /^\d{4}$/
-                # record the time
-                prev_time = Time.strptime(col, "%H%M")
-                col
-              when /^\d{2}$/
-
-                next if prev_time.nil?
-                # substitute with a time
-                val = "%02d%02d" % [prev_time.hour, col.to_i]
-
-                #if col is less than minutes, increment the hour
-                t = Time.strptime(val, "%H%M")          
-                t = t + (60 * 60) if prev_time.min > t.min
-                prev_time = t
-                t.strftime("%H%M")
-              else
-                col
-              end
-            end
-          end
-
-        end
-=end
         # fill in the gaps
 
         periods = gaps.map {|i| a.map {|k,v| v[i].to_s.gsub(/\W/,' ')}
@@ -236,6 +228,27 @@ class LothianBusesTimetable
 
   end
   
+  def fetch_all_timetables()
+    
+    return @timetables if @timetables
+    
+    number = []
+    self.services.each {|k,type| type.each {|x| number << x[:number]}  }    
+    
+    timetables = number.map do |num|
+
+      puts 'fetching timetable ' + num
+      
+      [num, self.fetch_timetable(num)]
+
+    end
+    
+    @timetables = timetables.to_h    
+    
+  end
+  
+  alias fetch_all fetch_all_timetables
+  
   def services()
     
     return @services if @services
@@ -257,6 +270,18 @@ class LothianBusesTimetable
 
     @services = o.to_h
       
+  end
+    
+  def save_timetables(filename='bustimetables.json')
+    
+    File.write filename, @timetables.to_json
+    
+  end
+  
+  alias save save_timetables
+  
+  def timetable(num)
+    @timetables[num]
   end
   
   private
@@ -282,17 +307,14 @@ class LothianBusesTimetable
     master[:weekday][:inbound] = h
     h = a0.shift
     a0.reject! {|x| x.empty?}
-
     
     if a0.first and a0.first.any? then
       
-      #h = a0.shift
       h = a0.shift until h.any?
 
       master[:weekday][:outbound] = h unless h.has_key? :timetable
 
       h = a0.shift unless h.has_key? :timetable
-
       
       if h and a0.any? and h[:timetable] != 'Public Holiday Timetable' then
         
@@ -307,11 +329,11 @@ class LothianBusesTimetable
         h = a0.shift until h.any?
 
         master[:saturday][:outbound] = h unless h.has_key? :timetable
-
         
         h = a0.shift until h.any?   
 
         if h and a0.any? then
+          
           h = a0.shift
           h = a0.shift until h.any?
           master[:sunday][:desc] = h[:timetable]
@@ -382,12 +404,10 @@ class LothianBusesTimetable
       [k,times, (start_i+1..i-1)]
     end.compact    
     
-
   end  
 
   def every_interval(rows, i, interval=60)
-    # todo 26-Aug-2017
-    # here we will add 
+
     return unless interval
     
     rows.map do |k,v|
